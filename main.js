@@ -41,14 +41,15 @@ function fingerExtended(lm, tipIdx, pipIdx) {
   return dist(lm[tipIdx], wrist) > dist(lm[pipIdx], wrist);
 }
 
-// Fist: all fingers + thumb not extended
-function isFist(lm) {
+// Open palm: all fingers extended
+function isOpenPalm(lm) {
   const indexExt = fingerExtended(lm, 8, 6);
   const middleExt = fingerExtended(lm, 12, 10);
   const ringExt = fingerExtended(lm, 16, 14);
   const pinkyExt = fingerExtended(lm, 20, 18);
   const thumbExt = fingerExtended(lm, 4, 3);
-  return !indexExt && !middleExt && !ringExt && !pinkyExt && !thumbExt;
+
+  return indexExt && middleExt && ringExt && pinkyExt && thumbExt;
 }
 
 // Draw settings
@@ -148,10 +149,10 @@ async function run() {
 
         const indexTipPx = toPixel(lm[8], drawCanvas);
 
-        const fist = isFist(lm);
+        const openPalm = isOpenPalm(lm);
         const pinch = isPinching(lm);
 
-        if (fist) {
+        if (openPalm) {
           eraseAt(indexTipPx);
           drawHudCursor(indexTipPx, "erase");
           lastPoint = null;
