@@ -43,13 +43,15 @@ function fingerExtended(lm, tipIdx, pipIdx) {
 
 // Open palm: all fingers extended
 function isOpenPalm(lm) {
-  const indexExt = fingerExtended(lm, 8, 6);
-  const middleExt = fingerExtended(lm, 12, 10);
-  const ringExt = fingerExtended(lm, 16, 14);
-  const pinkyExt = fingerExtended(lm, 20, 18);
-  const thumbExt = fingerExtended(lm, 4, 3);
+  const index = fingerStraight(lm, 5, 6, 7, 8);
+  const middle = fingerStraight(lm, 9, 10, 11, 12);
+  const ring = fingerStraight(lm, 13, 14, 15, 16);
+  const pinky = fingerStraight(lm, 17, 18, 19, 20);
 
-  return indexExt && middleExt && ringExt && pinkyExt && thumbExt;
+  // Optional: require hand to be "spread" (helps avoid false positives)
+  const spread = dist(lm[8], lm[20]) > 0.35; // index tip to pinky tip
+
+  return index && middle && ring && pinky && spread;
 }
 
 // Draw settings
