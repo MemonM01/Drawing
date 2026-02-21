@@ -1,5 +1,4 @@
-import * as vision from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
-const { FilesetResolver, HandLandmarker } = vision;
+import { FilesetResolver, HandLandmarker } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm";
 
 const video = document.getElementById("video");
 const drawCanvas = document.getElementById("draw");
@@ -29,31 +28,26 @@ function toPixel(pt, canvas) {
   return { x: pt.x * canvas.width, y: pt.y * canvas.height };
 }
 
-// --- Gesture heuristics ---
 // Pinch: thumb tip (4) close to index tip (8)
 function isPinching(lm) {
-  const pinch = dist(lm[4], lm[8]);          // normalized
-  return pinch < 0.05;                       // tweak: 0.04–0.06
+  const pinch = dist(lm[4], lm[8]); // normalized
+  return pinch < 0.05;              // tweak: 0.04–0.06
 }
 
-// Finger extended test (robust-ish): compare distance to wrist
+// Finger extended heuristic: compare distance to wrist.
 // If tip is farther from wrist than PIP, finger is likely extended.
 function fingerExtended(lm, tipIdx, pipIdx) {
   const wrist = lm[0];
   return dist(lm[tipIdx], wrist) > dist(lm[pipIdx], wrist);
 }
 
-// Fist: all 4 fingers (index/middle/ring/pinky) NOT extended,
-// and thumb NOT extended as well (roughly).
+// Fist: all fingers + thumb not extended
 function isFist(lm) {
   const indexExt = fingerExtended(lm, 8, 6);
   const middleExt = fingerExtended(lm, 12, 10);
   const ringExt = fingerExtended(lm, 16, 14);
   const pinkyExt = fingerExtended(lm, 20, 18);
-
-  // Thumb: tip (4) vs IP (3)
   const thumbExt = fingerExtended(lm, 4, 3);
-
   return !indexExt && !middleExt && !ringExt && !pinkyExt && !thumbExt;
 }
 
@@ -61,7 +55,7 @@ function isFist(lm) {
 let lastPoint = null;
 
 // Eraser settings
-const ERASER_RADIUS = 28; // pixels (increase/decrease)
+const ERASER_RADIUS = 28;
 
 function drawLine(from, to) {
   drawCtx.lineWidth = 6;
@@ -75,7 +69,6 @@ function drawLine(from, to) {
 }
 
 function eraseAt(p) {
-  // Smooth eraser using compositing
   drawCtx.save();
   drawCtx.globalCompositeOperation = "destination-out";
   drawCtx.beginPath();
@@ -89,7 +82,6 @@ function hudClear() {
 }
 
 function drawHudCursor(p, mode) {
-  // mode: "draw" | "erase" | "idle"
   hudCtx.save();
   hudCtx.lineWidth = 3;
   hudCtx.beginPath();
@@ -107,9 +99,11 @@ async function setupCamera() {
     video: { facingMode: "user" },
     audio: false
   });
+
   video.srcObject = stream;
 
   await new Promise((res) => (video.onloadedmetadata = res));
+  await video.play().catch(() => {}); // helps iPhone/Safari sometimes
   resizeCanvasesToVideo();
 }
 
@@ -158,17 +152,14 @@ async function run() {
         const pinch = isPinching(lm);
 
         if (fist) {
-          // ERASE
           eraseAt(indexTipPx);
           drawHudCursor(indexTipPx, "erase");
           lastPoint = null;
         } else if (pinch) {
-          // DRAW
           drawHudCursor(indexTipPx, "draw");
           if (lastPoint) drawLine(lastPoint, indexTipPx);
           lastPoint = indexTipPx;
         } else {
-          // idle (tracking but not drawing)
           drawHudCursor(indexTipPx, "idle");
           lastPoint = null;
         }
