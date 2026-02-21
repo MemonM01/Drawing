@@ -5,7 +5,6 @@ const drawCanvas = document.getElementById("draw");
 const hudCanvas = document.getElementById("hud");
 const drawCtx = drawCanvas.getContext("2d");
 const hudCtx = hudCanvas.getContext("2d");
-
 const clearBtn = document.getElementById("clearBtn");
 
 function resizeCanvasesToVideo() {
@@ -28,43 +27,54 @@ function toPixel(pt, canvas) {
   return { x: pt.x * canvas.width, y: pt.y * canvas.height };
 }
 
+// ---------- Gestures ----------
+
 // Pinch: thumb tip (4) close to index tip (8)
 function isPinching(lm) {
-  const pinch = dist(lm[4], lm[8]); // normalized
-  return pinch < 0.05;              // tweak: 0.04–0.06
+  return dist(lm[4], lm[8]) < 0.05; // tweak 0.04–0.06
 }
 
-// Finger extended heuristic: compare distance to wrist.
-// If tip is farther from wrist than PIP, finger is likely extended.
-function fingerExtended(lm, tipIdx, pipIdx) {
-  const wrist = lm[0];
-  return dist(lm[tipIdx], wrist) > dist(lm[pipIdx], wrist);
+// Angle at point b between ba and bc
+function angleDeg(a, b, c) {
+  const ab = { x: a.x - b.x, y: a.y - b.y };
+  const cb = { x: c.x - b.x, y: c.y - b.y };
+  const dot = ab.x * cb.x + ab.y * cb.y;
+  const magAB = Math.hypot(ab.x, ab.y);
+  const magCB = Math.hypot(cb.x, cb.y);
+  const cos = dot / (magAB * magCB + 1e-9);
+  const clamped = Math.max(-1, Math.min(1, cos));
+  return (Math.acos(clamped) * 180) / Math.PI;
 }
 
-// Open palm: all fingers extended
+// Finger straight if joints are near-straight
+function fingerStraight(lm, mcp, pip, dip, tip) {
+  const a1 = angleDeg(lm[mcp], lm[pip], lm[dip]);
+  const a2 = angleDeg(lm[pip], lm[dip], lm[tip]);
+  return a1 > 160 && a2 > 160; // tweak 150–170 if needed
+}
+
+// Open palm: four fingers straight (+ optional spread)
 function isOpenPalm(lm) {
   const index = fingerStraight(lm, 5, 6, 7, 8);
   const middle = fingerStraight(lm, 9, 10, 11, 12);
   const ring = fingerStraight(lm, 13, 14, 15, 16);
   const pinky = fingerStraight(lm, 17, 18, 19, 20);
 
-  // Optional: require hand to be "spread" (helps avoid false positives)
-  const spread = dist(lm[8], lm[20]) > 0.35; // index tip to pinky tip
+  // Spread check helps avoid false positives (optional)
+  const spread = dist(lm[8], lm[20]) > 0.30; // easier than 0.35
 
   return index && middle && ring && pinky && spread;
 }
 
-// Draw settings
-let lastPoint = null;
+// ---------- Drawing / Erasing ----------
 
-// Eraser settings
-const ERASER_RADIUS = 28;
+let lastPoint = null;
+const ERASER_RADIUS = 30;
 
 function drawLine(from, to) {
   drawCtx.lineWidth = 6;
   drawCtx.lineCap = "round";
   drawCtx.strokeStyle = "white";
-
   drawCtx.beginPath();
   drawCtx.moveTo(from.x, from.y);
   drawCtx.lineTo(to.x, to.y);
@@ -106,7 +116,7 @@ async function setupCamera() {
   video.srcObject = stream;
 
   await new Promise((res) => (video.onloadedmetadata = res));
-  await video.play().catch(() => {}); // helps iPhone/Safari sometimes
+  await video.play().catch(() => {});
   resizeCanvasesToVideo();
 }
 
@@ -148,12 +158,12 @@ async function run() {
 
       if (hands && hands.length > 0) {
         const lm = hands[0];
-
         const indexTipPx = toPixel(lm[8], drawCanvas);
 
-        const openPalm = isOpenPalm(lm);
         const pinch = isPinching(lm);
+        const openPalm = isOpenPalm(lm);
 
+        // Erase wins over draw
         if (openPalm && !pinch) {
           eraseAt(indexTipPx);
           drawHudCursor(indexTipPx, "erase");
