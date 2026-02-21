@@ -8,16 +8,19 @@ const hudCtx = hudCanvas.getContext("2d");
 const clearBtn = document.getElementById("clearBtn");
 
 let lastPoint = null;
-const ERASER_RADIUS = 30;
+const ERASER_RADIUS = 32;
 
+// --- Utils ---
 function resizeCanvasesToVideo() {
   const w = video.videoWidth;
   const h = video.videoHeight;
   if (!w || !h) return;
-  drawCanvas.width = w;
-  drawCanvas.height = h;
-  hudCanvas.width = w;
-  hudCanvas.height = h;
+  if (drawCanvas.width !== w || drawCanvas.height !== h) {
+    drawCanvas.width = w;
+    drawCanvas.height = h;
+    hudCanvas.width = w;
+    hudCanvas.height = h;
+  }
 }
 
 function dist(a, b) {
@@ -30,25 +33,26 @@ function toPixel(pt, canvas) {
   return { x: pt.x * canvas.width, y: pt.y * canvas.height };
 }
 
-// Pinch: thumb tip close to index tip
+// --- Gestures (more forgiving thresholds) ---
+function pinchDistance(lm) {
+  return dist(lm[4], lm[8]); // thumb tip to index tip (normalized)
+}
+
 function isPinching(lm) {
-  return dist(lm[4], lm[8]) < 0.055; // slightly easier
+  // 0.05 can be too strict on some cameras. Start at 0.085.
+  return pinchDistance(lm) < 0.085;
 }
 
-// More forgiving "open palm":
-// fingertips should be above their PIP joints (for selfie camera view this still works well)
-function isOpenPalmSimple(lm) {
-  const indexUp = lm[8].y < lm[6].y;
-  const middleUp = lm[12].y < lm[10].y;
-  const ringUp = lm[16].y < lm[14].y;
-  const pinkyUp = lm[20].y < lm[18].y;
-
-  // also require fingers somewhat spread (optional but helps)
-  const spread = dist(lm[8], lm[20]) > 0.25;
-
-  return indexUp && middleUp && ringUp && pinkyUp && spread;
+// Simple fist: fingertips below PIP joints (y bigger) for all 4 fingers
+function isFistSimple(lm) {
+  const indexDown = lm[8].y > lm[6].y;
+  const middleDown = lm[12].y > lm[10].y;
+  const ringDown = lm[16].y > lm[14].y;
+  const pinkyDown = lm[20].y > lm[18].y;
+  return indexDown && middleDown && ringDown && pinkyDown;
 }
 
+// --- Drawing / erasing ---
 function drawLine(from, to) {
   drawCtx.lineWidth = 6;
   drawCtx.lineCap = "round";
@@ -72,12 +76,16 @@ function hudClear() {
   hudCtx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
 }
 
-function hudText(text) {
+function hudText(lines) {
   hudCtx.save();
-  hudCtx.font = "20px system-ui, Arial";
+  hudCtx.font = "18px system-ui, Arial";
   hudCtx.fillStyle = "rgba(255,255,255,0.95)";
   hudCtx.textAlign = "left";
-  hudCtx.fillText(text, 16, 34);
+  let y = 28;
+  for (const line of lines) {
+    hudCtx.fillText(line, 14, y);
+    y += 22;
+  }
   hudCtx.restore();
 }
 
@@ -101,7 +109,6 @@ async function setupCamera() {
   });
 
   video.srcObject = stream;
-
   await new Promise((res) => (video.onloadedmetadata = res));
   await video.play().catch(() => {});
   resizeCanvasesToVideo();
@@ -118,7 +125,11 @@ async function createHandLandmarker() {
         "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
     },
     runningMode: "VIDEO",
-    numHands: 1
+    numHands: 1,
+    // These help detection in tricky lighting / webcams
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence: 0.5,
+    minTrackingConfidence: 0.5
   });
 }
 
@@ -131,37 +142,50 @@ async function run() {
   const loop = () => {
     const now = performance.now();
 
+    // Ensure canvases match actual video size
+    resizeCanvasesToVideo();
+
     if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
       lastVideoTime = video.currentTime;
       hudClear();
 
       const result = landmarker.detectForVideo(video, now);
-      const hands = result.landmarks;
+      const hands = result?.landmarks;
 
-      if (hands && hands.length > 0) {
+      const handCount = hands?.length ?? 0;
+
+      if (handCount > 0) {
         const lm = hands[0];
-        const indexTipPx = toPixel(lm[8], drawCanvas);
+        const p = toPixel(lm[8], drawCanvas);
 
+        const pd = pinchDistance(lm);
         const pinch = isPinching(lm);
-        const palm = isOpenPalmSimple(lm);
+        const fist = isFistSimple(lm);
 
-        if (palm && !pinch) {
-          hudText("PALM = ERASE");
-          eraseAt(indexTipPx);
-          drawHudCursor(indexTipPx, "erase");
+        let mode = "IDLE";
+        if (fist) mode = "FIST=ERASE";
+        else if (pinch) mode = "PINCH=DRAW";
+
+        hudText([
+          `HANDS: ${handCount}`,
+          `pinchDist: ${pd.toFixed(3)} (thresh 0.085)`,
+          `mode: ${mode}`
+        ]);
+
+        if (fist) {
+          eraseAt(p);
+          drawHudCursor(p, "erase");
           lastPoint = null;
         } else if (pinch) {
-          hudText("PINCH = DRAW");
-          drawHudCursor(indexTipPx, "draw");
-          if (lastPoint) drawLine(lastPoint, indexTipPx);
-          lastPoint = indexTipPx;
+          drawHudCursor(p, "draw");
+          if (lastPoint) drawLine(lastPoint, p);
+          lastPoint = p;
         } else {
-          hudText("IDLE");
-          drawHudCursor(indexTipPx, "idle");
+          drawHudCursor(p, "idle");
           lastPoint = null;
         }
       } else {
-        hudText("NO HAND");
+        hudText([`HANDS: 0`, `No landmarks detected`]);
         lastPoint = null;
       }
     }
