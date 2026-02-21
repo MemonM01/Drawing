@@ -154,7 +154,7 @@ async function run() {
         const openPalm = isOpenPalm(lm);
         const pinch = isPinching(lm);
 
-        if (openPalm) {
+        if (openPalm && !pinch) {
           eraseAt(indexTipPx);
           drawHudCursor(indexTipPx, "erase");
           lastPoint = null;
