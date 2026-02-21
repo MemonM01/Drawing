@@ -7,6 +7,9 @@ const drawCtx = drawCanvas.getContext("2d");
 const hudCtx = hudCanvas.getContext("2d");
 const clearBtn = document.getElementById("clearBtn");
 
+let lastPoint = null;
+const ERASER_RADIUS = 30;
+
 function resizeCanvasesToVideo() {
   const w = video.videoWidth;
   const h = video.videoHeight;
@@ -27,49 +30,24 @@ function toPixel(pt, canvas) {
   return { x: pt.x * canvas.width, y: pt.y * canvas.height };
 }
 
-// ---------- Gestures ----------
-
-// Pinch: thumb tip (4) close to index tip (8)
+// Pinch: thumb tip close to index tip
 function isPinching(lm) {
-  return dist(lm[4], lm[8]) < 0.05; // tweak 0.04–0.06
+  return dist(lm[4], lm[8]) < 0.055; // slightly easier
 }
 
-// Angle at point b between ba and bc
-function angleDeg(a, b, c) {
-  const ab = { x: a.x - b.x, y: a.y - b.y };
-  const cb = { x: c.x - b.x, y: c.y - b.y };
-  const dot = ab.x * cb.x + ab.y * cb.y;
-  const magAB = Math.hypot(ab.x, ab.y);
-  const magCB = Math.hypot(cb.x, cb.y);
-  const cos = dot / (magAB * magCB + 1e-9);
-  const clamped = Math.max(-1, Math.min(1, cos));
-  return (Math.acos(clamped) * 180) / Math.PI;
+// More forgiving "open palm":
+// fingertips should be above their PIP joints (for selfie camera view this still works well)
+function isOpenPalmSimple(lm) {
+  const indexUp = lm[8].y < lm[6].y;
+  const middleUp = lm[12].y < lm[10].y;
+  const ringUp = lm[16].y < lm[14].y;
+  const pinkyUp = lm[20].y < lm[18].y;
+
+  // also require fingers somewhat spread (optional but helps)
+  const spread = dist(lm[8], lm[20]) > 0.25;
+
+  return indexUp && middleUp && ringUp && pinkyUp && spread;
 }
-
-// Finger straight if joints are near-straight
-function fingerStraight(lm, mcp, pip, dip, tip) {
-  const a1 = angleDeg(lm[mcp], lm[pip], lm[dip]);
-  const a2 = angleDeg(lm[pip], lm[dip], lm[tip]);
-  return a1 > 160 && a2 > 160; // tweak 150–170 if needed
-}
-
-// Open palm: four fingers straight (+ optional spread)
-function isOpenPalm(lm) {
-  const index = fingerStraight(lm, 5, 6, 7, 8);
-  const middle = fingerStraight(lm, 9, 10, 11, 12);
-  const ring = fingerStraight(lm, 13, 14, 15, 16);
-  const pinky = fingerStraight(lm, 17, 18, 19, 20);
-
-  // Spread check helps avoid false positives (optional)
-  const spread = dist(lm[8], lm[20]) > 0.30; // easier than 0.35
-
-  return index && middle && ring && pinky && spread;
-}
-
-// ---------- Drawing / Erasing ----------
-
-let lastPoint = null;
-const ERASER_RADIUS = 30;
 
 function drawLine(from, to) {
   drawCtx.lineWidth = 6;
@@ -94,14 +72,23 @@ function hudClear() {
   hudCtx.clearRect(0, 0, hudCanvas.width, hudCanvas.height);
 }
 
+function hudText(text) {
+  hudCtx.save();
+  hudCtx.font = "20px system-ui, Arial";
+  hudCtx.fillStyle = "rgba(255,255,255,0.95)";
+  hudCtx.textAlign = "left";
+  hudCtx.fillText(text, 16, 34);
+  hudCtx.restore();
+}
+
 function drawHudCursor(p, mode) {
   hudCtx.save();
   hudCtx.lineWidth = 3;
   hudCtx.beginPath();
   hudCtx.arc(p.x, p.y, mode === "erase" ? ERASER_RADIUS : 10, 0, Math.PI * 2);
   hudCtx.strokeStyle =
-    mode === "draw" ? "rgba(255,255,255,0.9)" :
-    mode === "erase" ? "rgba(255,255,255,0.9)" :
+    mode === "draw" ? "rgba(255,255,255,0.95)" :
+    mode === "erase" ? "rgba(255,255,255,0.95)" :
     "rgba(255,255,255,0.35)";
   hudCtx.stroke();
   hudCtx.restore();
@@ -136,11 +123,6 @@ async function createHandLandmarker() {
 }
 
 async function run() {
-  if (!navigator.mediaDevices?.getUserMedia) {
-    alert("Camera API not supported in this browser.");
-    return;
-  }
-
   await setupCamera();
   const landmarker = await createHandLandmarker();
 
@@ -161,22 +143,25 @@ async function run() {
         const indexTipPx = toPixel(lm[8], drawCanvas);
 
         const pinch = isPinching(lm);
-        const openPalm = isOpenPalm(lm);
+        const palm = isOpenPalmSimple(lm);
 
-        // Erase wins over draw
-        if (openPalm && !pinch) {
+        if (palm && !pinch) {
+          hudText("PALM = ERASE");
           eraseAt(indexTipPx);
           drawHudCursor(indexTipPx, "erase");
           lastPoint = null;
         } else if (pinch) {
+          hudText("PINCH = DRAW");
           drawHudCursor(indexTipPx, "draw");
           if (lastPoint) drawLine(lastPoint, indexTipPx);
           lastPoint = indexTipPx;
         } else {
+          hudText("IDLE");
           drawHudCursor(indexTipPx, "idle");
           lastPoint = null;
         }
       } else {
+        hudText("NO HAND");
         lastPoint = null;
       }
     }
@@ -187,11 +172,11 @@ async function run() {
   requestAnimationFrame(loop);
 }
 
-clearBtn.addEventListener("click", () => {
+clearBtn?.addEventListener("click", () => {
   drawCtx.clearRect(0, 0, drawCanvas.width, drawCanvas.height);
 });
 
 run().catch((e) => {
   console.error(e);
-  alert("Failed to start. Open DevTools console for details.");
+  alert("Failed to start. Check console for the error.");
 });
